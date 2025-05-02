@@ -295,6 +295,7 @@ def delete_account():
             if pin == result[0]:
                 cursor.execute("DELETE FROM user_info WHERE user_id = %s", (account_id,))
                 connection.commit()
+                print("Your account has been deleted!")
                 main_options()
             elif pin == '0':
                 break
