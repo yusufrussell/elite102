@@ -1,30 +1,33 @@
-# from tkinter import *
-# from tkinter import ttk
-# import mysql.connector
-
-# root = Tk()
-# root.title("Banking App")
-
-# mainframe = ttk.Frame(root, padding="3 3 12 12")
-# mainframe.grid(column=0, row=0, sticky=(N, W, E, S))
-# root.columnconfigure(0, weight=1)
-# root.rowconfigure(0, weight=1)
-
-# ttk.Button(mainframe, text='Create Account', command=)
-
-
 import mysql.connector
 
 connection = mysql.connector.connect(user = 'root', database = 'elite_102', password = 'rA911msA!')
 
 cursor = connection.cursor()
 
+
 account_id = 0
 
-#Main options that user is greeted to
+def update_usernames():
+    global password_attempts, usernames
+    # Obtain all usernames and adds to list for later use
+    usernames = []
+    cursor.execute("SELECT username FROM user_info")
+    usernames = [item[0] for item in cursor.fetchall()]
+
+def get_usernames():
+    # Allows for lockout from account after excessive password or PIN attempts
+    global password_attempts, usernames, locked_accounts
+    update_usernames()
+    password_attempts = dict.fromkeys(usernames,0)
+    locked_accounts = []
+
+
+# Main options that user is greeted to
 def main_options():
     while True:
         print("\n--------------------\n1: Create an Account\n\n2: Access Your Account\n\n3: Exit\n--------------------\n")
+        
+        # Makes sure user inputs integer between 1-3
         try:
             choice = int(input("Type a number 1-3: "))
         except ValueError:
@@ -76,6 +79,8 @@ def create_account():
     first_name = input("Enter your first name: ").upper()
     last_name = input("Enter your last name: ").upper()
     pin = ""
+
+    # Logic that makes sure PIN is in correct format
     while len(pin) != 4:
         try:
             pin=input("Enter a 4-digit PIN: ")
@@ -84,36 +89,62 @@ def create_account():
             pin = ""
         if len(pin) !=4:
             print("Make sure to enter a PIN that contains only integers and is 4 digits")
+    
     # Insert info into mySQL database
     addData = "INSERT INTO user_info (username, password, first_name, last_name, PIN, balance) VALUES (%s, %s, %s, %s, %s, 0)"
     cursor.execute(addData, (username, password, first_name, last_name, pin))
     connection.commit()
+    update_usernames()
 
     print("Account Created!\n\nPlease sign in to access your account")
     access_account()
 
 
 def access_account():
-    global account_id
-    username = input("\nEnter your username: ").upper() 
-    password = input ("Enter your password: ")
+    global account_id, password_attempts, usernames, locked_accounts
+    while True:
+        # User inputs login info
+        username = input("\nEnter your username: ").upper() 
+        password = input ("Enter your password: ")
 
-    findAccount = "SELECT user_id, first_name, last_name FROM user_info WHERE username = %s AND password = %s"
-    cursor.execute(findAccount, (username, password))
-    result = cursor.fetchone()
-    if result:
-        account_id = result[0]
-        print(f"\nWelcome back, {result[1]} {result[2]}!")
-        account_options()
-    else:
-        retry = input("\nIncorrect username or password\nWould you like to try again? (y/n): ").lower()
-        if retry == 'y':
-            access_account()
-        else:
+        # Checks if username and password are accurate
+        findAccount = "SELECT user_id, first_name, last_name, username FROM user_info WHERE username = %s AND password = %s"
+        cursor.execute(findAccount, (username, password))
+        result = cursor.fetchone()
+
+        # Checks if accout is locked
+        if username in locked_accounts:
+            print("\nYou can not sign back into your account right now")
             main_options()
+
+        if result:
+            # Welcomes user and allows user to pass to next menu
+            account_id = result[0]
+            print(f"\nWelcome back, {result[1]} {result[2]}!")
+            password_attempts[username] = 0
+            account_options()
+        else:
+            # Adds 1 to failed attempts
+            if username in usernames:
+                password_attempts[username] = password_attempts.get(username, 0) + 1
+
+                # 5 failed attempts locks account until program is restarted
+                if password_attempts.get(username) >= 5:
+                    print("\nToo many failed passwords. You are locked out of your account")
+                    locked_accounts.append(username)
+                    return
+            
+            # Allows user to exit or retry
+            retry = input("\nIncorrect username or password\nWould you like to try again? (y/n): ").lower()
+            if retry == 'y':
+                continue
+            else:
+                return
 
 def check_balance():
     global account_id
+
+    # Gets balance from mySQL table
     cursor.execute("SELECT balance FROM user_info WHERE user_id = %s", (account_id,))
     result = cursor.fetchone()
     if result:
@@ -125,12 +156,15 @@ def deposit():
     global account_id
     while True:
         deposit_amount = input("\nEnter the amount you want to deposit (up to 2 decimal places): ")
+
+        # Makes sure that the user enters a float with up to 2 decimal places
         if '.' in deposit_amount:
             integer_part, decimal_part = deposit_amount.split('.', 1)
             if len(decimal_part) > 2:
                 print("You can only enter up to two digits after the decimal point. Try again.")
                 continue
-
+        
+        # Makes sure the input is a proper float
         try:
             deposit_amount = float(deposit_amount)
             cursor.execute("UPDATE user_info SET balance = balance + %s WHERE user_id = %s", (deposit_amount, account_id))
@@ -143,12 +177,20 @@ def deposit():
     
 def withdraw():
     global account_id
-    cursor.execute("SELECT PIN, balance FROM user_info WHERE user_id = %s", (account_id,))
+
+    # Gets user info from mySQL table
+    cursor.execute("SELECT username, PIN, balance FROM user_info WHERE user_id = %s", (account_id,))
     result = cursor.fetchone()
     while True:
+        # Checks if account is locked
+        if result[0] in locked_accounts:
+            print("\nYou are locked out of your account")
+            main_options()
         pin = input("Enter your 4-digit PIN: ")
-        if pin == result[0]:
+        if pin == result[1]:
             withdrawal_amount = input("How much would you like to withdraw? ")
+
+            # Makes sure that the user enters a float with up to 2 decimal places
             if '.' in withdrawal_amount:
                 integer_part, decimal_part = withdrawal_amount.split('.', 1)
                 if len(decimal_part) > 2:
@@ -156,9 +198,12 @@ def withdraw():
                     continue
             try:
                 withdrawal_amount=float(withdrawal_amount)
-                if float(withdrawal_amount) > result[1]:
+
+                # Makes sure user does notoverdraft
+                if float(withdrawal_amount) > result[2]:
                     print("Make sure you do not withdraw more than your account balance. Try Again")
                     continue
+
                 cursor.execute("UPDATE user_info SET balance = balance - %s WHERE user_id = %s", (withdrawal_amount, account_id))
                 connection.commit()
                 print(f"\nSuccessfully withdrew ${withdrawal_amount:.2f}.")
@@ -168,18 +213,31 @@ def withdraw():
                 print("Invalid input. Please enter a valid number.")
                 continue
         else:
+            # Logic to lock user out of account if too many failed PIN attempts
+            password_attempts[result[0]] = password_attempts.get(result[0], 0) + 1
+            if password_attempts.get(result[0]) >= 5:
+                print("\nToo many failed PINs. You are locked out of your account")
+                locked_accounts.append(result[0])
+                main_options()
             print("Invalid PIN. Try again")
+
 
 def modify_account():
     global account_id
     global usernames
-    cursor.execute("SELECT username, password, first_name, last_name FROM user_info WHERE user_id = %s", (account_id,))
+
+    # Retrieves necessary info from mySQL table
+    cursor.execute("SELECT username, password, first_name, last_name, PIN FROM user_info WHERE user_id = %s", (account_id,))
     result = cursor.fetchone()
-    print(f"\nUsername: {result[0]}\nPassword: {result[1]}\nFirst Name: {result[2]}\nLast Name: {result[3]}")
+
+    # Prints user info other than password and PIN
+    print(f"\nUsername: {result[0]}\nPassword: ******\nFirst Name: {result[2]}\nLast Name: {result[3]}\nPIN: ****")
+
+    # Code repeats until user is satisfied with account modifications
     while True:
-        print("\nChoose what to modify:\n--------------------\n1: Modify Username\n\n2: Modify Password\n\n3: Modify First Name\n\n4: Modify Last Name\n\n5: Done\n--------------------\n")
+        print("\nChoose what to modify:\n--------------------\n1: Modify Username\n\n2: Modify Password\n\n3: Modify First Name\n\n4: Modify Last Name\n\n5: Modify PIN\n\n6: Done\n--------------------\n")
         try:
-            choice = int(input("Type a number 1-5: "))
+            choice = int(input("Type a number 1-6: "))
         except ValueError:
             choice = 0
             
@@ -190,8 +248,15 @@ def modify_account():
                 changed_element = input("\n\nUsername is already taken\nEnter another username: ")
             modified_column = "username"
         elif choice == 2:
-            changed_element = input("Enter a new password: ")
-            modified_column = "password"
+            attempt = input("Enter your current password: ")
+
+            # Makes user enter current password before changing it
+            if attempt == result[1]:
+                changed_element = input("Enter a new password: ")
+                modified_column = "password"
+            else:
+                print("Wrong password. Password cannot be changed.")
+                break
         elif choice == 3:
             changed_element = input("Enter your First Name: ").upper()
             modified_column = "first_name"
@@ -199,12 +264,23 @@ def modify_account():
             changed_element = input("Enter your Last Name: ").upper()
             modified_column = "last_name"
         elif choice == 5:
+            attempt = input("Enter your current PIN: ")
+
+            # Makes user enter current PIN before changing it
+            if attempt == result[4]:
+                changed_element = input("Enter a new PIN: ")
+                modified_column = "PIN"
+            else:
+                print("Wrong PIN. PIN cannot be changed.")
+                break
+        elif choice == 6:
             break
         else:
             print("Make sure you enter a number from 1-5.")
         query = f"UPDATE user_info SET {modified_column} = %s WHERE user_id = %s"
         cursor.execute(query, (changed_element, account_id))
         connection.commit()
+        update_usernames()
 
 def delete_account():
     global account_id
@@ -213,6 +289,8 @@ def delete_account():
     confirmation = input("Are you sure you want to delete your account (y/n): ").lower()
     if confirmation == 'y':
         while True:
+
+            # Makes sure deletion is not accidental
             pin = input("Enter your 4-digit PIN. Enter '0' to quit: ")
             if pin == result[0]:
                 cursor.execute("DELETE FROM user_info WHERE user_id = %s", (account_id,))
@@ -224,18 +302,12 @@ def delete_account():
                 print("Incorrect PIN or invalid answer. Try again")
     
 
-
-
-# Obtain all usernames to eliminate duplicates
-usernames = []
-cursor.execute("SELECT username FROM user_info")
-usernames = [item[0] for item in cursor.fetchall()]
+password_attempts = {}
 
 # Greeting Message
 print("Hello, welcome to Yusuf's Bank! Here are your options:")
+get_usernames()
 main_options()
-
-
 
 cursor.close()
 connection.close()
